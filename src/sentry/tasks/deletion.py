@@ -10,7 +10,9 @@ from __future__ import absolute_import
 
 import logging
 
+from django.db import transaction
 from django.db.models import get_model
+from django.utils import timezone
 
 from sentry import nodestore
 from sentry.constants import ObjectStatus
@@ -21,6 +23,26 @@ from sentry.tasks.base import instrumented_task, retry
 from sentry.utils.query import bulk_delete_objects
 
 logger = logging.getLogger('sentry.deletions.async')
+
+
+@instrumented_task(name='sentry.tasks.run_scheduled_deletions', queue='cleanup')
+def run_scheduled_deletions():
+    from sentry.models import PendingDeletion
+
+    queryset = PendingDeletion.objects.filter(
+        in_progress=False,
+        date_scheduled__lte=timezone.now(),
+    )
+    for item in queryset:
+        with transaction.atomic():
+            affected = PendingDeletion.objects.filter(
+                id=item.id,
+                in_progress=False,
+            ).update(
+                in_progress=True,
+            )
+            if not affected:
+                continue
 
 
 @instrumented_task(name='sentry.tasks.deletion.delete_organization', queue='cleanup',
